@@ -1,0 +1,129 @@
+================================================================================
+PROJECT IMPLEMENTATION PLAN: MULTILINGUAL BUSINESS ENTITY RESOLUTION
+================================================================================
+
+CHALLENGE OBJECTIVE: 
+Match business entities from Source 2 and Source 3 to the deduplicated reference 
+Source 1 using noisy, incomplete, multilingual fields (US, India, and France), 
+optimized for precision-heavy F_0.5 score.
+
+--------------------------------------------------------------------------------
+PHASE 1: ENVIRONMENT SETUP & DATA INGESTION
+--------------------------------------------------------------------------------
+1. Directory Structure Setup:
+   - Create dataset/, output/, and code/business_entity_resolution/src/ directories.
+2. Safe Data Loading:
+   - Load all training and test files (.tsv) using explicit tab separation: 
+     pd.read_csv(path, sep='\t') to prevent single-column formatting bugs.
+   - Handle missing/blank values gracefully by replacing NaN with empty strings ('').
+
+--------------------------------------------------------------------------------
+PHASE 2: BLOCKING & CANDIDATE GENERATION (Similar Word Ratio & Bucketing)
+--------------------------------------------------------------------------------
+1. Token Intersection / Similar Word Ratio:
+   - Extract lowercase word tokens from business names for Source 1 and Source 2/3.
+   - Compute the token overlap count (intersection) between record pairs.
+2. Dynamic Bucketing Strategy:
+   - Group records into candidate buckets where the country matches and they share 
+     at least 1 common name token or matching address prefix.
+3. Candidate Pairs Output:
+   - Generate and save the required `output/candidate_pairs.tsv` containing every 
+     plausible match pair evaluated by the blocking stage.
+
+--------------------------------------------------------------------------------
+PHASE 3: FEATURE ENGINEERING & DYNAMIC TF-IDF VOCABULARY
+--------------------------------------------------------------------------------
+1. Dynamic Vocabulary via Character N-Grams:
+   - Fit a global TfidfVectorizer (using analyzer='char_wb', ngram_range=(2, 4)) 
+     across all combined business names and addresses. 
+   - This ensures that new words, typos, and multilingual/transliterated variants 
+     are broken down into character fragments dynamically without retraining.
+2. Pairwise Similarity Features:
+   - Compute cosine similarity of the TF-IDF vectors for business names.
+   - Compute cosine similarity for business addresses.
+   - Add structural and categorical flags (e.g., exact country match indicator).
+
+--------------------------------------------------------------------------------
+PHASE 4: NEURAL NETWORK / CLASSIFICATION MODEL TRAINING
+--------------------------------------------------------------------------------
+1. Training Data Preparation:
+   - Map candidate feature vectors against train_ground_truth.tsv to create 
+     labeled binary classification rows (1 for match, 0 for non-match).
+2. Model Architecture:
+   - Build a Neural Network (or a robust Gradient Boosting model like LightGBM) 
+     taking the feature vector inputs (name similarity, address similarity, 
+     similar word counts, country match flags).
+   - Train the model using binary cross-entropy loss.
+3. Threshold Tuning for F_0.5 Metric:
+   - Tune the decision threshold on a validation split. Because F_0.5 weights 
+     precision twice as heavily as recall, raise the classification cutoff 
+     (e.g., threshold > 0.80) to aggressively minimize false merges.
+
+--------------------------------------------------------------------------------
+PHASE 5: INFERENCE, POST-PROCESSING, & VALIDATION
+--------------------------------------------------------------------------------
+1. Scoring Candidate Pairs:
+   - Pass test candidate pairs through the trained feature extractor and model 
+     to predict match probabilities.
+2. Singleton Management:
+   - Ensure any Source 1 entity that fails to reach the matching threshold across 
+     all candidates outputs an empty list (correctly predicting singletons to 
+     earn full evaluation credit).
+3. Final Output Generation:
+   - Format and export `output/matching_results.tsv` with exact tab separators 
+     and comma-listed IDs.
+4. Local Verification:
+   - Run the validation script `python3 utils/validate_submission.py` to ensure 
+     the output files pass all structural rules before final submission.
+================================================================================
+
+
+
+LIGHTWEIGHT BUSINESS ENTITY RESOLUTION PIPELINE: METHODOLOGY & ARCHITECTURE
+==========================================================================
+
+EXECUTIVE SUMMARY
+This document outlines a production-grade, lightweight machine learning and heuristic 
+feature-engineering pipeline designed to solve business entity resolution across multi-source, 
+multi-lingual datasets. By replacing brittle global text vectorizers with token-level phonetic 
+string matching and corporate suffix normalization, the system achieves high-precision matching 
+while executing efficiently on local hardware.
+
+1. CANDIDATE GENERATION & BLOCKING STRATEGY
+To prevent an O(N x M) pairwise comparison bottleneck across massive datasets, the pipeline 
+employs a structured blocking phase:
+- Country-Level Partitioning: Entities are strictly blocked by their country attribute, ensuring 
+  records from different geographic regions are never compared.
+- Soft Token Intersecting / Initial Screening: To catch cross-lingual variants (e.g., English 
+  script vs. Tamil/Hindi script) or minor spelling variances, records sharing geographic markers 
+  undergo feature extraction without requiring rigid token identity.
+
+2. ADVANCED FEATURE ENGINEERING
+Rather than relying on generic string comparisons, the system extracts three core robust numerical 
+features for every candidate pair:
+- Name Token Max Jaro Similarity (name_max_jaro):
+  * Preprocessing: Converts text to lowercase, strips punctuation/special characters, and filters 
+    out common corporate legal suffixes (ltd, limited, inc, incorporated, corp, corporation, llp, 
+    pvt, private, llc).
+  * Token-Level Scoring: For every word w1 in Business Name 1, the system computes the maximum 
+    Jaro-Winkler similarity against all words w2 in Business Name 2, accumulating and normalizing 
+    the score. This handles typos, word-order transpositions, and noise efficiently.
+- Address Jaro Similarity (address_jaro):
+  * Evaluates string-level Jaro-Winkler distance on normalized address strings. Handles cases 
+    where street names or abbreviations vary slightly.
+- Country Match Indicator (country_match):
+  * A binary flag (1 if countries match, 0 otherwise) acting as a hard geographic constraint.
+
+3. SCORING & DECISION MODEL
+The extracted features are combined using a weighted composite score designed to favor high precision:
+Composite Score = (0.65 * name_max_jaro) + (0.25 * address_jaro) + (0.10 * country_match)
+- Missing Address Handling: When records lack address data, the formula dynamically re-weights 
+  the remaining features to rely primarily on name similarity and country confirmation.
+- Thresholding / Classification: Pairs crossing a calibrated threshold (e.g., >= 0.55 - 0.70) 
+  are classified as true matches. Unmatched Source 1 entities automatically default to empty 
+  strings (singletons) to conform with output specifications.
+
+4. VALIDATION & RESULTS
+Empirical testing against actual training ground truth data demonstrates that this lightweight 
+feature set successfully identifies complex, multi-lingual, and noisy entity matches (such as 
+corporate name transformations and cross-script variations) with exceptional accuracy.

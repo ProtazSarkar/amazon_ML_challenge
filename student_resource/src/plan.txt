@@ -1,0 +1,23 @@
+MULTI-SIGNAL ENTITY RESOLUTION PIPELINE: FEATURE EXTRACTION FOLDER USAGE
+
+Overview:
+Instead of relying on fragile, single-rule checks or manual hardcoding to clean and match messy records, we use a modular feature extraction architecture. This allows us to evaluate text, names, and addresses through multiple independent lenses at the same time, turning raw data into structured numerical signals that a neural network can learn from.
+
+1. The Global Foundation (util.py)
+- Universal Cleaning: Standardizes raw strings by handling non-Latin scripts (like Indian Devanagari or Tamil) through phonetic Roman transliteration, stripping European diacritics, and forcing everything to lowercase.
+- Preserving Token Boundaries: Instead of deleting punctuation marks like hyphens, dots, or slashes (which accidentally squashes words together like SMART-HALL), it intelligently converts them into spaces so compound words and abbreviations split cleanly.
+- Noise Filtering: Strips unwanted symbols while preserving core alphanumeric text and filtering out common legal/web suffixes (like pvt, ltd, inc, or .com) to prevent score distortion.
+
+2. The Name Feature Module (name_feature.py)
+- TF-IDF Vectorization: Evaluates the statistical relevance and contextual overlap of words within a shared vocabulary space.
+- Character-Level Similarity: Measures direct character alignment and string ratios to catch minor spelling variations.
+- Word-Level Token Max Jaro: Compares individual words across names using maximum Jaro-Winkler alignment combined with token-set ratios to handle missing suffixes or reordered words.
+- N-Gram Similarity: Analyzes sliding character or token chunks to safely score names even when word boundaries are slightly distorted.
+
+3. The Address Feature Module (addr_features.py)
+- Comma-Based Normalization: Splits addresses into logical segments by commas to isolate individual components.
+- Structural Anchors (Pincodes): Automatically extracts 5-to-6 digit postal codes via regular expressions and flags a strong binary match indicator if they align.
+- Regional & Street Alignment: Computes dedicated similarity scores for states, cities, and road keywords using partial substring matching and token-set ratios, ensuring components match even if written in a different order.
+
+4. Feeding the Neural Network
+- Once all modular functions run on a record pair, they output a clean collection of numerical scores (character matches, token overlaps, structural pincodes, and contextual indicators). These form a unified feature vector fed straight into your Multi-Layer Perceptron neural network, allowing the AI to dynamically weigh every signal and make a final prediction.
